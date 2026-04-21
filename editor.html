@@ -125,165 +125,6 @@ let isDrEl=false,dES=null,dEO=null;
 const vp=$('vp');
 // Undo/redo history
 const HIST=[],HFWD=[];const HMAX=20;
-
-const svgMap = new Map();
-const LM = new Map();
-let rootNode = null;
-
-function node(id,type){
-  return {
-    id,type,
-    children:[],
-    parent:null,
-    layout:{mode:'NONE',gap:0,padding:{t:0,r:0,b:0,l:0}},
-    size:{w:0,h:0},
-    pos:{x:0,y:0},
-    text:{content:'',maxWidth:null}
-  }
-}
-
-function build(n,parent=null){
-  const x = node(n.id,n.type);
-  LM.set(x.id,x);
-
-  if(parent){
-    x.parent=parent;
-    parent.children.push(x);
-  }
-
-  if(n.layoutMode){
-    x.layout.mode = n.layoutMode==='VERTICAL'?'VERTICAL':'HORIZONTAL';
-    x.layout.gap = n.itemSpacing||0;
-    x.layout.padding = {
-      t:n.paddingTop||0,
-      r:n.paddingRight||0,
-      b:n.paddingBottom||0,
-      l:n.paddingLeft||0
-    }
-  }
-
-  if(n.type==='TEXT'){
-    x.text.content = n.characters||'';
-    if(n.absoluteBoundingBox){
-      x.text.maxWidth = n.absoluteBoundingBox.width;
-    }
-  }
-
-  if(n.absoluteBoundingBox){
-    x.size.w = n.absoluteBoundingBox.width;
-    x.size.h = n.absoluteBoundingBox.height;
-  }
-
-  if(n.children){
-    n.children.forEach(c=>build(c,x));
-  }
-
-  return x;
-}
-
-  
-function mapSVG(){
-  svgMap.clear();
-  document.querySelectorAll('[data-figma-id]').forEach(el=>{
-    svgMap.set(el.getAttribute('data-figma-id'),el);
-  });
-}
-
-function measure(n){
-  const el = svgMap.get(n.id);
-
-  if(n.type==='TEXT' && el){
-    el.textContent = n.text.content;
-    const box = el.getBBox();
-    n.size.w = n.text.maxWidth || box.width;
-    n.size.h = box.height;
-  }
-
-  n.children.forEach(measure);
-
-  if(n.layout.mode==='VERTICAL'){
-    let h=0,w=0;
-    n.children.forEach((c,i)=>{
-      h+=c.size.h+(i?n.layout.gap:0);
-      w=Math.max(w,c.size.w);
-    });
-    n.size.h = h + n.layout.padding.t + n.layout.padding.b;
-    n.size.w = w + n.layout.padding.l + n.layout.padding.r;
-  }
-
-  if(n.layout.mode==='HORIZONTAL'){
-    let w=0,h=0;
-    n.children.forEach((c,i)=>{
-      w+=c.size.w+(i?n.layout.gap:0);
-      h=Math.max(h,c.size.h);
-    });
-    n.size.w = w + n.layout.padding.l + n.layout.padding.r;
-    n.size.h = h + n.layout.padding.t + n.layout.padding.b;
-  }
-}
-
-function layout(n,x=0,y=0){
-  n.pos.x=x;
-  n.pos.y=y;
-
-  if(n.layout.mode==='NONE') return;
-
-  let cx=x+n.layout.padding.l;
-  let cy=y+n.layout.padding.t;
-
-  n.children.forEach(c=>{
-    layout(c,cx,cy);
-
-    if(n.layout.mode==='VERTICAL'){
-      cy+=c.size.h+n.layout.gap;
-    }else{
-      cx+=c.size.w+n.layout.gap;
-    }
-  });
-}
-
-
-function render(n){
-  const el = svgMap.get(n.id);
-  if(!el) return;
-
-  if(n.type==='TEXT'){
-    el.setAttribute('x',n.pos.x);
-    el.setAttribute('y',n.pos.y+16);
-    el.textContent = n.text.content;
-
-    el.onclick=()=>{
-      const val = prompt('Edit text',n.text.content);
-      if(val!==null){
-        n.text.content = val;
-        relayout();
-      }
-    }
-
-  }else{
-    el.setAttribute('x',n.pos.x);
-    el.setAttribute('y',n.pos.y);
-    el.setAttribute('width',n.size.w);
-    el.setAttribute('height',n.size.h);
-  }
-
-  n.children.forEach(render);
-}
-
-
-
-function relayout(){
-  measure(rootNode);
-  layout(rootNode,50,50);
-  render(rootNode);
-}
-
-
-mapSVG();
-  
-rootNode = build(json);
-relayout();
-  
 function hPush(){if(!svg)return;const s=new XMLSerializer().serializeToString(svg);HIST.push(s);if(HIST.length>HMAX)HIST.shift();HFWD.length=0;}
 function hUndo(){if(!HIST.length||!svg)return;HFWD.push(new XMLSerializer().serializeToString(svg));if(HFWD.length>HMAX)HFWD.shift();const s=HIST.pop();hRestore(s);}
 function hRedo(){if(!HFWD.length||!svg)return;HIST.push(new XMLSerializer().serializeToString(svg));const s=HFWD.pop();hRestore(s);}
@@ -526,27 +367,33 @@ function updateTextFrame(textEl,nid){
   const NS='http://www.w3.org/2000/svg';
   let old=svg?.querySelector('[data-tframe="'+nid+'"]');
   if(old)old.remove();
-  if(!textEl)return;
-  let tbb=TBB.get(nid);
-  if(!tbb){
-    try{const bb=textEl.getBBox();tbb={w:bb.width,h:bb.height,autoResize:'NONE',alignH:'LEFT',alignV:'TOP'};TBB.set(nid,tbb);}catch(e){return;}
+  const tbb=TBB.get(nid);
+  if(!tbb||!tbb.w||!textEl)return;
+  const tspans=textEl.querySelectorAll('tspan');
+  const firstX=parseFloat((tspans[0]||textEl).getAttribute('x'))||0;
+  const firstY=parseFloat((tspans[0]||textEl).getAttribute('y'))||0;
+  const fs=parseFloat(textEl.getAttribute('font-size'))||14;
+  const lineCount=Math.max(1,tspans.length);
+  let lh=fs*1.3;
+  if(tspans.length>1){
+    const dy=parseFloat(tspans[1].getAttribute('dy'));
+    if(dy>0)lh=dy;
+    else{
+      const y0=parseFloat(tspans[0].getAttribute('y'))||0;
+      const y1=parseFloat(tspans[1].getAttribute('y'))||0;
+      if(y1>y0)lh=y1-y0;
+    }
   }
-  const tm=getTextMetrics(textEl);
-  const bb=(()=>{try{return textEl.getBBox();}catch(e){return{x:0,y:0,width:0,height:0};}})();
-  const autoResize=(tbb.autoResize||'NONE').toUpperCase();
-  if(['WIDTH','AUTO_WIDTH','WIDTH_AND_HEIGHT'].includes(autoResize)||!tbb.w)tbb.w=Math.max(bb.width,1);
-  tbb.h=Math.max(tm.totalHeight,tbb.h||0,1);
-  const frameX=isFinite(tbb.frameX)?tbb.frameX:bb.x;
-  const frameY=isFinite(tbb.frameY)?tbb.frameY:bb.y;
-  const baselineY=(tm.tspans[0]?parseFloat(tm.tspans[0].getAttribute('y')):parseFloat(textEl.getAttribute('y')))||0;
-  tbb.baselineOffset=baselineY-frameY;
-  TBB.set(nid,tbb);
+  // Height: dynamic based on actual line count
+  const frameH=lineCount*lh;
+  // Update TBB height so layout knows the new size
+  tbb.h=frameH;
   const r=document.createElementNS(NS,'rect');
   r.dataset.tframe=nid;
-  r.setAttribute('x',frameX);
-  r.setAttribute('y',frameY);
-  r.setAttribute('width',Math.max(tbb.w||0,1));
-  r.setAttribute('height',Math.max(tbb.h||0,1));
+  r.setAttribute('x',firstX);
+  r.setAttribute('y',firstY-fs*0.85); // approx ascender offset
+  r.setAttribute('width',tbb.w);
+  r.setAttribute('height',frameH);
   r.setAttribute('fill','none');
   r.setAttribute('stroke','#6391FF');
   r.setAttribute('stroke-width','1.5');
@@ -697,129 +544,24 @@ function c2h(c){if(!c||c==='none'||c==='transparent')return'#000000';if(/^#[0-9a
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
 // Auto-layout engine
-function getTextMetrics(el){
-  const fs=parseFloat(el.getAttribute('font-size'))||14;
-  const tspans=[...el.querySelectorAll('tspan')];
-  const lineCount=Math.max(1,tspans.length||1);
-  let lh=fs*1.3;
-  if(tspans.length>1){
-    const dy=parseFloat(tspans[1].getAttribute('dy'));
-    if(dy>0)lh=dy;
-    else{
-      const y0=parseFloat(tspans[0].getAttribute('y'))||0;
-      const y1=parseFloat(tspans[1].getAttribute('y'))||0;
-      if(y1>y0)lh=y1-y0;
-    }
-  }
-  return {fs,tspans,lineCount,lh,totalHeight:Math.max(lh,lineCount*lh)};
-}
-function getTextLayoutBounds(el){
-  const nid=el?.dataset?.nid;
-  try{
-    const bb=el.getBBox();
-    if(!nid||!TBB.has(nid))return bb;
-    const tbb=TBB.get(nid)||{};
-    return {
-      x:isFinite(tbb.frameX)?tbb.frameX:bb.x,
-      y:isFinite(tbb.frameY)?tbb.frameY:bb.y,
-      width:Math.max(tbb.w||bb.width,1),
-      height:Math.max(tbb.h||bb.height,1)
-    };
-  }catch(e){
-    return {x:0,y:0,width:0,height:0};
-  }
-}
-function getLayoutBounds(el){
-  const tag=el?.tagName?.toLowerCase();
-  if(tag==='text')return getTextLayoutBounds(el);
-  return el.getBBox();
-}
-function getTextAnchorX(meta, frameX, frameW){
-  const ah=(meta?.alignH||'LEFT').toUpperCase();
-  if(ah==='CENTER')return frameX+frameW/2;
-  if(ah==='RIGHT')return frameX+frameW;
-  return frameX;
-}
-function getTextBaselineY(el,nid,frameY,frameH){
-  const meta=TBB.get(nid)||{};
-  const tm=getTextMetrics(el);
-  const totalH=Math.max(meta.h||tm.totalHeight,tm.totalHeight);
-  const baselineOffset=isFinite(meta.baselineOffset)?meta.baselineOffset:tm.fs*0.85;
-  const av=(meta.alignV||'TOP').toUpperCase();
-  if(av==='CENTER')return frameY+(frameH-totalH)/2+baselineOffset;
-  if(av==='BOTTOM')return frameY+frameH-totalH+baselineOffset;
-  return frameY+baselineOffset;
-}
-function positionTextInFrame(el,nid,frameX,frameY,frameW,frameH){
-  const meta=TBB.get(nid)||{};
-  const tm=getTextMetrics(el);
-  const anchorX=getTextAnchorX(meta,frameX,frameW);
-  const firstBaseline=getTextBaselineY(el,nid,frameY,frameH||meta.h||tm.totalHeight);
-  if(tm.tspans.length){
-    tm.tspans.forEach((ts,i)=>{
-      ts.setAttribute('x',Math.round(anchorX*100)/100);
-      if(i===0){
-        ts.setAttribute('y',Math.round(firstBaseline*100)/100);
-        ts.removeAttribute('dy');
-      }else{
-        ts.removeAttribute('y');
-        ts.setAttribute('dy',Math.round(tm.lh*100)/100);
-      }
-    });
-  }else{
-    el.setAttribute('x',Math.round(anchorX*100)/100);
-    el.setAttribute('y',Math.round(firstBaseline*100)/100);
-  }
-  const ah=(meta.alignH||'LEFT').toUpperCase();
-  if(ah==='CENTER')el.setAttribute('text-anchor','middle');
-  else if(ah==='RIGHT')el.setAttribute('text-anchor','end');
-  else el.setAttribute('text-anchor','start');
-  meta.frameX=frameX;
-  meta.frameY=frameY;
-  meta.w=Math.max(frameW||meta.w||1,1);
-  meta.h=Math.max(frameH||meta.h||tm.totalHeight,tm.totalHeight);
-  meta.baselineOffset=firstBaseline-frameY;
-  TBB.set(nid,meta);
-}
-function fitSvgToContentIfNeeded(){
-  if(!svg)return;
-  try{
-    const bb=svg.getBBox();
-    if(!isFinite(bb.width)||!isFinite(bb.height)||bb.width<=0||bb.height<=0)return;
-    const pad=8;
-    const minX=Math.min(0,Math.floor(bb.x-pad));
-    const minY=Math.min(0,Math.floor(bb.y-pad));
-    const needW=Math.ceil(bb.x+bb.width+pad-minX);
-    const needH=Math.ceil(bb.y+bb.height+pad-minY);
-    svg.setAttribute('width',needW);
-    svg.setAttribute('height',needH);
-    const vb=svg.viewBox?.baseVal;
-    if(vb){vb.x=minX;vb.y=minY;vb.width=needW;vb.height=needH;}
-    else svg.setAttribute('viewBox',`${minX} ${minY} ${needW} ${needH}`);
-    const bgRect=svg.querySelector(':scope > rect');
-    if(bgRect){
-      bgRect.setAttribute('x',minX);
-      bgRect.setAttribute('y',minY);
-      bgRect.setAttribute('width',needW);
-      bgRect.setAttribute('height',needH);
-    }
-  }catch(e){}
-}
 function applyLayout(gEl){
   const nid=gEl.dataset?.nid;
   const ly=LAY.get(nid);if(!ly||!ly.on)return;
+  // Collect visible layout children (skip clipPath, defs, bg rects that are first child)
   const kids=[];
   let bgRect=null;
   for(const ch of gEl.children){
     const tg=ch.tagName?.toLowerCase();
-    if(tg==='clippath'||tg==='defs'||tg==='mask')continue;
-    if(!bgRect&&tg==='rect'&&!ch.dataset?.nid){bgRect=ch;continue;}
+    if(tg==='clippath'||tg==='defs')continue;
+    if(!bgRect&&tg==='rect'&&!ch.dataset?.nid){bgRect=ch;continue;} // first rect = bg
     if(!ch.dataset?.nid||hidS.has(ch.dataset.nid))continue;
-    try{kids.push({el:ch,b:getLayoutBounds(ch),nid:ch.dataset.nid});}catch(e){}
+    try{const b=ch.getBBox();kids.push({el:ch,b,nid:ch.dataset.nid});}catch(e){}
   }
   if(!kids.length)return;
   const isH=ly.dir==='h';
   const CSIZ=ly.childSizing||{};
+
+  // Container dimensions from bg rect or group bbox
   let cW,cH,cX,cY;
   if(bgRect){
     cX=parseFloat(bgRect.getAttribute('x'))||0;
@@ -829,203 +571,246 @@ function applyLayout(gEl){
   }else{
     const gb=gEl.getBBox();cX=gb.x;cY=gb.y;cW=gb.width;cH=gb.height;
   }
-  const mainPadS=isH?ly.pl:ly.pt, mainPadE=isH?ly.pr:ly.pb;
-  const crossPadS=isH?ly.pt:ly.pl, crossPadE=isH?ly.pb:ly.pr;
-  const containerMain=isH?cW:cH, containerCross=isH?cH:cW;
-  const crossAvail=Math.max(0,containerCross-crossPadS-crossPadE);
 
+  const mainPadS=isH?ly.pl:ly.pt;
+  const mainPadE=isH?ly.pr:ly.pb;
+  const crossPadS=isH?ly.pt:ly.pl;
+  const crossPadE=isH?ly.pb:ly.pr;
+  const containerMain=isH?cW:cH;
+  const containerCross=isH?cH:cW;
+  const crossAvail=containerCross-crossPadS-crossPadE;
+
+  // Measure fixed vs fill
   let fixedTotal=0,fillCount=0;
   kids.forEach(k=>{
-    const kb=getLayoutBounds(k.el); k.b=kb;
     const cs=CSIZ[k.nid]||{};
     if(cs.main==='fill')fillCount++;
-    else fixedTotal+=(isH?kb.width:kb.height);
+    else fixedTotal+=(isH?k.b.width:k.b.height);
   });
 
-  let effGap=ly.gap||0;
-  if((ly.spacing||'packed')==='between'&&kids.length>1){
-    effGap=Math.max(0,(containerMain-mainPadS-mainPadE-fixedTotal)/(kids.length-1));
+  // Effective gap
+  let effGap=ly.gap;
+  if(ly.spacing==='between'&&kids.length>1){
+    effGap=(containerMain-mainPadS-mainPadE-fixedTotal)/(kids.length-1);
+    if(effGap<0)effGap=0;
   }
-  const gapTotal=((ly.spacing||'packed')==='between'?0:effGap*(kids.length-1));
-  const fillSpace=Math.max(0,containerMain-mainPadS-mainPadE-fixedTotal-gapTotal);
+  const gapTotal=effGap*(kids.length-1);
+  const fillSpace=Math.max(0,containerMain-mainPadS-mainPadE-fixedTotal-(ly.spacing==='between'?0:gapTotal));
   const fillSize=fillCount>0?fillSpace/fillCount:0;
+
+  // Origin is container's top-left
+  const oX=cX, oY=cY;
   let cursor=mainPadS;
 
   kids.forEach((k,i)=>{
-    const el=k.el, cs=CSIZ[k.nid]||{};
-    let b=getLayoutBounds(el), mSize=isH?b.width:b.height, cSize=isH?b.height:b.width;
+    const el=k.el,b=k.b;
+    const cs=CSIZ[k.nid]||{};
+    let mSize=isH?b.width:b.height;
+    let cSize=isH?b.height:b.width;
 
+    // FILL main: resize
     if(cs.main==='fill'&&fillSize>0){
       mSize=fillSize;
       const sizeAttr=isH?'width':'height';
-      if(el.tagName?.toLowerCase()==='text'&&el.dataset?.nid){
-        const meta=TBB.get(el.dataset.nid)||{};
-        if(isH)meta.w=Math.max(fillSize,1); else meta.h=Math.max(fillSize,1);
-        TBB.set(el.dataset.nid,meta);
-      }else{
-        if(el.hasAttribute(sizeAttr))el.setAttribute(sizeAttr,Math.round(mSize));
-        const br=el.querySelector(':scope > rect');
-        if(br&&br.hasAttribute(sizeAttr))br.setAttribute(sizeAttr,Math.round(mSize));
-      }
+      if(el.hasAttribute(sizeAttr))el.setAttribute(sizeAttr,Math.round(mSize));
+      const br=el.querySelector(':scope > rect');
+      if(br&&br.hasAttribute(sizeAttr))br.setAttribute(sizeAttr,Math.round(mSize));
     }
+    // FILL cross: stretch
     if(cs.cross==='fill'){
       cSize=crossAvail;
       const sizeAttr=isH?'height':'width';
-      if(el.tagName?.toLowerCase()==='text'&&el.dataset?.nid){
-        const meta=TBB.get(el.dataset.nid)||{};
-        if(isH)meta.h=Math.max(crossAvail,1); else meta.w=Math.max(crossAvail,1);
-        TBB.set(el.dataset.nid,meta);
-      }else{
-        if(el.hasAttribute(sizeAttr))el.setAttribute(sizeAttr,Math.round(cSize));
-        const br=el.querySelector(':scope > rect');
-        if(br&&br.hasAttribute(sizeAttr))br.setAttribute(sizeAttr,Math.round(cSize));
-      }
+      if(el.hasAttribute(sizeAttr))el.setAttribute(sizeAttr,Math.round(cSize));
+      const br=el.querySelector(':scope > rect');
+      if(br&&br.hasAttribute(sizeAttr))br.setAttribute(sizeAttr,Math.round(cSize));
     }
 
+    // Target position (absolute, relative to container origin)
     let tMain=cursor, tCross;
     if(ly.align==='center')tCross=crossPadS+(crossAvail-cSize)/2;
     else if(ly.align==='end')tCross=crossPadS+crossAvail-cSize;
     else tCross=crossPadS;
 
-    const targetX=isH?(cX+tMain):(cX+tCross);
-    const targetY=isH?(cY+tCross):(cY+tMain);
-    const elTag=el.tagName?.toLowerCase();
+    const targetX=isH?(oX+tMain):(oX+tCross);
+    const targetY=isH?(oY+tCross):(oY+tMain);
 
+    // Move element: figure out how to set its position
+    // For <g> elements, we look at their first child (bg rect) or use getBBox
+    const elTag=el.tagName?.toLowerCase();
     if(elTag==='g'){
-      const dx=targetX-b.x, dy=targetY-b.y;
-      if(Math.abs(dx)>0.01||Math.abs(dy)>0.01)shiftGroup(el,dx,dy);
-    }else if(elTag==='text'&&el.dataset?.nid){
-      const frameW=isH?mSize:cSize;
-      const frameH=isH?cSize:mSize;
-      positionTextInFrame(el,el.dataset.nid,targetX,targetY,frameW,frameH);
-      updateTextFrame(el,el.dataset.nid);
+      // Move entire group by shifting all direct children
+      const curBbox=b; // current bbox of group
+      const dx=targetX-curBbox.x;
+      const dy=targetY-curBbox.y;
+      if(Math.abs(dx)>0.5||Math.abs(dy)>0.5){
+        shiftGroup(el,dx,dy);
+      }
+    }else if(elTag==='text'){
+      // For text: get first tspan's x,y or the text's x,y
+      const tsp=el.querySelector('tspan');
+      if(tsp){
+        const oldX=parseFloat(tsp.getAttribute('x'))||0;
+        const oldY=parseFloat(tsp.getAttribute('y'))||0;
+        const baselineOffset=oldY-b.y; // preserve baseline offset
+        const dx=targetX-b.x;
+        const dy=targetY-b.y;
+        el.querySelectorAll('tspan').forEach(ts=>{
+          ts.setAttribute('x',Math.round((parseFloat(ts.getAttribute('x'))||0)+dx));
+        });
+        tsp.setAttribute('y',Math.round(targetY+baselineOffset));
+      }else{
+        el.setAttribute('x',Math.round(targetX));
+        el.setAttribute('y',Math.round(targetY+(parseFloat(el.getAttribute('font-size'))||14)));
+      }
     }else if(elTag==='rect'){
-      el.setAttribute('x',Math.round(targetX*100)/100);
-      el.setAttribute('y',Math.round(targetY*100)/100);
+      el.setAttribute('x',Math.round(targetX));
+      el.setAttribute('y',Math.round(targetY));
     }else if(elTag==='ellipse'){
-      el.setAttribute('cx',Math.round((targetX+(parseFloat(el.getAttribute('rx'))||0))*100)/100);
-      el.setAttribute('cy',Math.round((targetY+(parseFloat(el.getAttribute('ry'))||0))*100)/100);
+      el.setAttribute('cx',Math.round(targetX+(parseFloat(el.getAttribute('rx'))||0)));
+      el.setAttribute('cy',Math.round(targetY+(parseFloat(el.getAttribute('ry'))||0)));
     }else if(elTag==='circle'){
-      el.setAttribute('cx',Math.round((targetX+(parseFloat(el.getAttribute('r'))||0))*100)/100);
-      el.setAttribute('cy',Math.round((targetY+(parseFloat(el.getAttribute('r'))||0))*100)/100);
+      el.setAttribute('cx',Math.round(targetX+(parseFloat(el.getAttribute('r'))||0)));
+      el.setAttribute('cy',Math.round(targetY+(parseFloat(el.getAttribute('r'))||0)));
     }else if(elTag==='line'){
       const dx=targetX-b.x,dy=targetY-b.y;
-      ['x1','x2'].forEach(a=>el.setAttribute(a,Math.round(((parseFloat(el.getAttribute(a))||0)+dx)*100)/100));
-      ['y1','y2'].forEach(a=>el.setAttribute(a,Math.round(((parseFloat(el.getAttribute(a))||0)+dy)*100)/100));
+      ['x1','x2'].forEach(a=>el.setAttribute(a,Math.round((parseFloat(el.getAttribute(a))||0)+dx)));
+      ['y1','y2'].forEach(a=>el.setAttribute(a,Math.round((parseFloat(el.getAttribute(a))||0)+dy)));
     }else{
-      const ct=gTr(el), dx=targetX-b.x, dy=targetY-b.y;
+      // fallback: use transform
+      const ct=gTr(el);
+      const dx=targetX-b.x,dy=targetY-b.y;
       sTr(el,Math.round((ct.x+dx)*10)/10,Math.round((ct.y+dy)*10)/10);
     }
 
-    if(elTag==='g'&&k.nid){
-      const childLy=LAY.get(k.nid);
-      if(childLy&&childLy.on)applyLayout(el);
-    }
-    try{
-      const nb=getLayoutBounds(el);
-      k.b=nb; mSize=isH?nb.width:nb.height; cSize=isH?nb.height:nb.width;
-    }catch(e){}
     cursor+=mSize+(i<kids.length-1?effGap:0);
   });
 
+  // HUG: resize container bg rect
   if(ly.mainSizing==='hug'&&bgRect){
     const newMain=cursor+mainPadE;
     bgRect.setAttribute(isH?'width':'height',Math.round(newMain));
   }
   if(ly.crossSizing==='hug'&&bgRect){
-    let maxC=0;kids.forEach(k=>{const nb=getLayoutBounds(k.el);maxC=Math.max(maxC,isH?nb.height:nb.width);});
+    let maxC=0;kids.forEach(k=>{maxC=Math.max(maxC,isH?k.b.height:k.b.width);});
     bgRect.setAttribute(isH?'height':'width',Math.round(maxC+crossPadS+crossPadE));
   }
   hl(selEl);
 }
 
-// Shift a whole group as a single block via translate() on the group itself
+// Shift all children of a <g> by dx,dy (recursively handles position attrs)
 function shiftGroup(g,dx,dy){
-  const ct=gTr(g);
-  sTr(g,Math.round((ct.x+dx)*10)/10,Math.round((ct.y+dy)*10)/10);
+  for(const ch of g.children){
+    const t=ch.tagName?.toLowerCase();
+    if(t==='rect'||t==='image'||t==='use'||t==='foreignobject'){
+      ch.setAttribute('x',Math.round(((parseFloat(ch.getAttribute('x'))||0)+dx)*10)/10);
+      ch.setAttribute('y',Math.round(((parseFloat(ch.getAttribute('y'))||0)+dy)*10)/10);
+    }else if(t==='circle'){
+      ch.setAttribute('cx',Math.round(((parseFloat(ch.getAttribute('cx'))||0)+dx)*10)/10);
+      ch.setAttribute('cy',Math.round(((parseFloat(ch.getAttribute('cy'))||0)+dy)*10)/10);
+    }else if(t==='ellipse'){
+      ch.setAttribute('cx',Math.round(((parseFloat(ch.getAttribute('cx'))||0)+dx)*10)/10);
+      ch.setAttribute('cy',Math.round(((parseFloat(ch.getAttribute('cy'))||0)+dy)*10)/10);
+    }else if(t==='line'){
+      ['x1','x2'].forEach(a=>ch.setAttribute(a,Math.round(((parseFloat(ch.getAttribute(a))||0)+dx)*10)/10));
+      ['y1','y2'].forEach(a=>ch.setAttribute(a,Math.round(((parseFloat(ch.getAttribute(a))||0)+dy)*10)/10));
+    }else if(t==='text'){
+      ch.querySelectorAll('tspan').forEach(ts=>{
+        if(ts.hasAttribute('x'))ts.setAttribute('x',Math.round(((parseFloat(ts.getAttribute('x'))||0)+dx)*10)/10);
+        if(ts.hasAttribute('y'))ts.setAttribute('y',Math.round(((parseFloat(ts.getAttribute('y'))||0)+dy)*10)/10);
+      });
+      if(ch.hasAttribute('x'))ch.setAttribute('x',Math.round(((parseFloat(ch.getAttribute('x'))||0)+dx)*10)/10);
+      if(ch.hasAttribute('y'))ch.setAttribute('y',Math.round(((parseFloat(ch.getAttribute('y'))||0)+dy)*10)/10);
+    }else if(t==='g'){
+      shiftGroup(ch,dx,dy);
+    }else if(t==='path'){
+      // paths use transform
+      const ct=gTr(ch);sTr(ch,Math.round((ct.x+dx)*10)/10,Math.round((ct.y+dy)*10)/10);
+    }else if(t==='clippath'||t==='defs'||t==='mask'){}
+    else{
+      const ct=gTr(ch);sTr(ch,Math.round((ct.x+dx)*10)/10,Math.round((ct.y+dy)*10)/10);
+    }
+  }
 }
 
-// Cascade relayout: fully recompute all layout ancestors from inner to outer
+// Cascade relayout: from changed element up through all layout ancestors
 function relayoutFrom(el){
   if(!el||!svg)return;
-  const chain=[];
+  // Find parent layout container
   let p=el.parentElement;
   while(p&&p!==svg){
-    if(p.dataset?.nid){
+    if(p.dataset?.nid&&LAY.has(p.dataset.nid)){
       const ly=LAY.get(p.dataset.nid);
-      if(ly?.on)chain.push(p);
+      if(ly&&ly.on){
+        shiftSiblingsAfter(el,p,ly);
+        return;
+      }
     }
     p=p.parentElement;
   }
-  chain.forEach(g=>applyLayout(g));
-  fitSvgToContentIfNeeded();
-  if(selEl&&selEl.tagName?.toLowerCase()==='text'&&selEl.dataset?.nid&&TBB.has(selEl.dataset.nid)){
-    clearTextFrames();
-    updateTextFrame(selEl,selEl.dataset.nid);
+}
+
+// Shift only siblings AFTER the changed element, by the height difference
+function shiftSiblingsAfter(changedEl,layoutG,ly){
+  const isH=ly.dir==='h';
+  // Snapshot: record bbox of changed element BEFORE and AFTER
+  // We stored old bbox on focus, compare with current
+  const oldH=changedEl._oldBBox;
+  let curB;
+  try{curB=changedEl.getBBox();}catch(e){return;}
+  if(!oldH)return;
+  const delta=isH?(curB.width-oldH.width):(curB.height-oldH.height);
+  if(Math.abs(delta)<1)return; // no meaningful change
+  
+  // Find all layout children after this element
+  let found=false;
+  const siblings=[];
+  for(const ch of layoutG.children){
+    const tg=ch.tagName?.toLowerCase();
+    if(tg==='clippath'||tg==='defs')continue;
+    if(!ch.dataset?.nid)continue; // skip bg rect
+    if(ch===changedEl||ch.contains(changedEl)){found=true;continue;}
+    if(found)siblings.push(ch);
   }
+  // Also check inside clip-path groups
+  if(!found){
+    layoutG.querySelectorAll('g[clip-path] > *').forEach(ch=>{
+      if(!ch.dataset?.nid)return;
+      if(ch===changedEl||ch.contains(changedEl)){found=true;return;}
+      if(found)siblings.push(ch);
+    });
+  }
+  
+  const dx=isH?delta:0;
+  const dy=isH?0:delta;
+  siblings.forEach(sib=>{
+    const ct=gTr(sib);
+    sTr(sib,Math.round((ct.x+dx)*10)/10,Math.round((ct.y+dy)*10)/10);
+  });
+  // Resize SVG canvas to fit new content
+  growCanvas(dx,dy);
   hl(selEl);
 }
 
-function updateTextContent(el,nid,newText){
-  const meta=TBB.get(nid)||{w:0,h:0,autoResize:'NONE',alignH:'LEFT',alignV:'TOP'};
-  const autoResize=(meta.autoResize||'NONE').toUpperCase();
-  const isAutoWidth=['WIDTH','AUTO_WIDTH','WIDTH_AND_HEIGHT'].includes(autoResize);
-  const shouldWrap=!isAutoWidth && !!(meta.w&&meta.w>0);
-  const tm=getTextMetrics(el);
-  if(tm.tspans.length){
-    const measureTarget=tm.tspans[0];
-    function svgMeasure(str){
-      measureTarget.textContent=str||' ';
-      return measureTarget.getComputedTextLength();
-    }
-    const lines=[];
-    if(shouldWrap){
-      const words=newText.split(/(\s+)/);
-      let line='';
-      for(const w of words){
-        const test=line+w;
-        if(svgMeasure(test)>meta.w&&line.trim()){
-          lines.push(line.trimEnd());
-          line=w.trimStart();
-        }else line=test;
-      }
-      if(line||!lines.length)lines.push((line||'').trimEnd());
-    }else lines.push(newText);
-
-    while(el.querySelectorAll('tspan').length>lines.length&&el.querySelectorAll('tspan').length>1){
-      el.removeChild(el.querySelectorAll('tspan')[el.querySelectorAll('tspan').length-1]);
-    }
-    const curTs=el.querySelectorAll('tspan');
-    lines.forEach((ln,i)=>{
-      if(i<curTs.length)curTs[i].textContent=ln;
-      else{
-        const ts=document.createElementNS('http://www.w3.org/2000/svg','tspan');
-        ts.textContent=ln;
-        el.appendChild(ts);
-      }
-    });
-
-    if(isAutoWidth){
-      let maxW=1;
-      [...el.querySelectorAll('tspan')].forEach(ts=>{maxW=Math.max(maxW,ts.getComputedTextLength()||0);});
-      meta.w=maxW;
-    }
-    const tm2=getTextMetrics(el);
-    meta.h=Math.max(tm2.totalHeight, tm2.totalHeight);
-    TBB.set(nid,meta);
-    const lb=getTextLayoutBounds(el);
-    positionTextInFrame(el,nid,isFinite(meta.frameX)?meta.frameX:lb.x,isFinite(meta.frameY)?meta.frameY:lb.y,meta.w||lb.width,meta.h||tm2.totalHeight);
-    updateTextFrame(el,nid);
-  }else{
-    el.textContent=newText;
-    try{
-      const bb=el.getBBox();
-      if(isAutoWidth||!meta.w)meta.w=Math.max(bb.width,1);
-      meta.h=Math.max(bb.height,1);
-      TBB.set(nid,meta);
-      positionTextInFrame(el,nid,isFinite(meta.frameX)?meta.frameX:bb.x,isFinite(meta.frameY)?meta.frameY:bb.y,meta.w,meta.h);
-      updateTextFrame(el,nid);
-    }catch(e){}
+// Grow SVG viewBox and dimensions to accommodate content shift
+function growCanvas(dw,dh){
+  if(!svg)return;
+  if(dw){
+    const oldW=parseFloat(svg.getAttribute('width'))||0;
+    const vb=svg.viewBox.baseVal;
+    svg.setAttribute('width',Math.round(oldW+dw));
+    if(vb&&vb.width)svg.viewBox.baseVal.width=Math.round(vb.width+dw);
+  }
+  if(dh){
+    const oldH=parseFloat(svg.getAttribute('height'))||0;
+    const vb=svg.viewBox.baseVal;
+    svg.setAttribute('height',Math.round(oldH+dh));
+    if(vb&&vb.height)svg.viewBox.baseVal.height=Math.round(vb.height+dh);
+  }
+  // Also resize root bg rect if exists
+  const bgRect=svg.querySelector(':scope > rect');
+  if(bgRect){
+    if(dw){const rw=parseFloat(bgRect.getAttribute('width'))||0;bgRect.setAttribute('width',Math.round(rw+dw));}
+    if(dh){const rh=parseFloat(bgRect.getAttribute('height'))||0;bgRect.setAttribute('height',Math.round(rh+dh));}
   }
 }
 
@@ -1116,24 +901,89 @@ pw.querySelectorAll('.pil').forEach(lb=>lb.addEventListener('mousedown',e=>{e.pr
 document.querySelectorAll('[data-ap]').forEach(i=>{i.addEventListener('focus',()=>hPush(),{once:true});const h=()=>{const a=i.dataset.ap,v=i.value;el.setAttribute(a,v);hl(el);const r=i.closest('.pcr');if(!r)return;if(i.type==='color'){const t=r.querySelector('.pin[data-ap="'+a+'"]');if(t)t.value=v;}else{const c=r.querySelector('.pci[data-ap="'+a+'"]');if(c&&v&&v!=='none')try{c.value=c2h(v);}catch(e){}}};i.addEventListener('input',h);i.addEventListener('change',h);});
 const tx=$('pTx');if(tx){tx.addEventListener('focus',()=>{
   hPush();
+  // Save current bbox for relayout delta calculation
   try{el._oldBBox=el.getBBox();}catch(e){}
-});tx.addEventListener('input',()=>{
-  updateTextContent(el,nid,tx.value);
+},{once:true});tx.addEventListener('input',()=>{
+  const tspans=el.querySelectorAll('tspan');
+  const newText=tx.value;
+  if(tspans.length>0){
+    const firstX=parseFloat(tspans[0].getAttribute('x'))||0;
+    const tbb=TBB.get(nid);
+    let wrapW=tbb?tbb.w:0;
+    if(!wrapW){
+      let pg=el.parentElement;
+      for(let i=0;i<3&&pg;i++){
+        const bgR=pg.querySelector(':scope > rect[width]');
+        if(bgR){const rw=parseFloat(bgR.getAttribute('width'))||0;if(rw>0){wrapW=rw;break;}}
+        pg=pg.parentElement;
+      }
+    }
+    const fs=parseFloat(el.getAttribute('font-size'))||14;
+    const firstY=parseFloat(tspans[0].getAttribute('y'))||fs;
+    let lh=fs*1.3;
+    if(tspans.length>1){
+      const dy=parseFloat(tspans[1].getAttribute('dy'));
+      if(dy>0)lh=dy;
+      else{
+        const y0=parseFloat(tspans[0].getAttribute('y'))||0;
+        const y1=parseFloat(tspans[1].getAttribute('y'))||0;
+        if(y1>y0)lh=y1-y0;
+      }
+    }
+    // Use SVG text measurement — put all text in first tspan, measure with getComputedTextLength
+    const NS='http://www.w3.org/2000/svg';
+    function svgMeasure(str){
+      tspans[0].textContent=str;
+      return tspans[0].getComputedTextLength();
+    }
+    // Word-wrap using real SVG measurement
+    const lines=[];
+    if(wrapW>0){
+      const words=newText.split(/(\s+)/);
+      let line='';
+      for(const w of words){
+        const test=line+w;
+        if(svgMeasure(test)>wrapW&&line.trim()){
+          lines.push(line.trimEnd());line=w.trimStart();
+        }else{line=test;}
+      }
+      if(line)lines.push(line.trimEnd());
+    }else{lines.push(newText);}
+    // Remove excess tspans
+    while(el.querySelectorAll('tspan').length>lines.length&&el.querySelectorAll('tspan').length>1){
+      el.removeChild(el.querySelectorAll('tspan')[el.querySelectorAll('tspan').length-1]);
+    }
+    // Update/create tspans
+    const curTs=el.querySelectorAll('tspan');
+    lines.forEach((ln,i)=>{
+      if(i<curTs.length){
+        curTs[i].textContent=ln;
+      }else{
+        const ts=document.createElementNS(NS,'tspan');
+        ts.setAttribute('x',firstX);
+        ts.setAttribute('dy',lh);
+        ts.textContent=ln;
+        el.appendChild(ts);
+      }
+    });
+    // Update text frame visual
+    updateTextFrame(el,nid);
+  }else{
+    el.textContent=newText;
+  }
   hl(el);
-  relayoutFrom(el);
 });
-tx.addEventListener('blur',()=>{
-  updateTextContent(el,nid,tx.value);
-  relayoutFrom(el);
-});
+tx.addEventListener('blur',()=>{relayoutFrom(el);});
 }
 // Text frame width binding
 const tFW=$('tFrameW');if(tFW)tFW.addEventListener('input',()=>{
   if(!el._oldBBox)try{el._oldBBox=el.getBBox();}catch(e){}
   const w=+tFW.value||0;
   if(w>0){TBB.set(nid,{...(TBB.get(nid)||{}),w});}else{TBB.delete(nid);}
-  // Re-trigger text wrap + relayout happens inside input handler
+  // Re-trigger text wrap
   const txI=$('pTx');if(txI)txI.dispatchEvent(new Event('input'));
+  // Relayout parent since text size changed
+  setTimeout(()=>relayoutFrom(el),50);
 });
 const dt=$('dT'),dd=$('dD');if(dt)dt.addEventListener('change',()=>{if(dt.checked){if(!dynM.has(nid))dynM.set(nid,{alias:el.id||nid,props:new Set(['fill','opacity'])});if(dd)dd.style.display='block';}else{dynM.delete(nid);if(dd)dd.style.display='none';}uDB();bT();const r=document.querySelector(`.tn[data-nid="${nid}"]`);if(r)r.classList.add('sel');});
 const da=$('dA');if(da)da.addEventListener('input',()=>{const d=dynM.get(nid);if(d)d.alias=da.value.trim().replace(/\s+/g,'_')||nid;});
@@ -1514,6 +1364,7 @@ function applyFigmaMeta(){
   let raw;try{raw=JSON.parse(jsonText);}catch(e){log.innerHTML='<span style="color:var(--red)">❌ Invalid JSON: '+e.message+'</span>';return;}
   if(Array.isArray(raw))raw=raw[0];
 
+  // Find root frame node
   function findFrame(obj){
     if(!obj||typeof obj!=='object')return null;
     if(obj.type&&obj.absoluteBoundingBox)return obj;
@@ -1529,140 +1380,86 @@ function applyFigmaMeta(){
   const root=findFrame(raw);
   if(!root){log.innerHTML='<span style="color:var(--red)">❌ Не найден фрейм в JSON</span>';return;}
 
-  const matchedNids=new Set();
-  const allSvgEls=[...svg.querySelectorAll('[data-nid]')].filter(el=>el!==svg);
-  const byId=new Map();
-  allSvgEls.forEach(el=>{
-    if(el.id){
-      if(!byId.has(el.id))byId.set(el.id,[]);
-      byId.get(el.id).push(el);
-    }
-    const fid=el.getAttribute('data-figma-id');
-    if(fid){
-      if(!byId.has(fid))byId.set(fid,[]);
-      byId.get(fid).push(el);
-    }
-  });
-  function normalizeName(s){return String(s||'').trim().replace(/\s+/g,' ').toLowerCase();}
-  function normalizeText(s){return String(s||'').trim().replace(/\s+/g,' ');}
-  function textAutoResizeOf(node){return node.style?.textAutoResize||node.textAutoResize||'NONE';}
-  function scoreNodeToSvg(node,el){
-    let score=0;
-    const name=normalizeName(node.name||'');
-    const elId=normalizeName(el.id||el.getAttribute('data-figma-id')||'');
-    if(name&&elId===name)score-=1000;
-    const nodeChars=normalizeText(node.text?.characters||node.characters||'');
-    if(node.type==='TEXT'&&nodeChars){
-      const tchars=normalizeText(el.textContent||'');
-      if(tchars===nodeChars)score-=900;
-      else score+=Math.abs(tchars.length-nodeChars.length)*4;
-    }
-    if(node.absoluteBoundingBox){
-      try{
-        const b=getLayoutBounds(el), ab=node.absoluteBoundingBox;
-        const cx1=b.x+b.width/2, cy1=b.y+b.height/2;
-        const cx2=ab.x+ab.width/2, cy2=ab.y+ab.height/2;
-        score+=Math.hypot(cx1-cx2,cy1-cy2);
-        score+=Math.abs((b.width||0)-(ab.width||0))*0.8;
-        score+=Math.abs((b.height||0)-(ab.height||0))*0.8;
-      }catch(e){score+=1000;}
-    }
-    return score;
-  }
-  function findBestSvgMatch(node){
-    const name=node.name||'';
-    const exact=[...(byId.get(name)||[])];
-    const safe=name.replace(/[^a-zA-Z0-9_-]/g,'_');
-    if(safe!==name)exact.push(...(byId.get(safe)||[]));
-    if(node.id)exact.push(...(byId.get(node.id)||[]));
-    const uniqueExact=[...new Set(exact)];
-    const exactFree=uniqueExact.find(el=>!matchedNids.has(el.dataset.nid));
-    if(exactFree)return exactFree;
-
-    const type=node.type||'';
-    const nodeChars=normalizeText(node.text?.characters||node.characters||'');
-    let pool=allSvgEls.filter(el=>!matchedNids.has(el.dataset.nid));
-    pool=pool.filter(el=>{
-      const tag=el.tagName.toLowerCase();
-      if(type==='TEXT')return tag==='text';
-      if(['FRAME','GROUP','COMPONENT','INSTANCE','BOOLEAN_OPERATION','VECTOR'].includes(type))return tag==='g' || tag==='path' || tag==='polygon' || tag==='polyline';
-      if(type==='RECTANGLE')return tag==='rect';
-      if(type==='ELLIPSE')return tag==='ellipse'||tag==='circle';
-      return true;
-    });
-    if(type==='TEXT'&&nodeChars){
-      const sameText=pool.filter(el=>normalizeText(el.textContent||'')===nodeChars);
-      if(sameText.length===1)return sameText[0];
-      if(sameText.length>1)return sameText.sort((a,b)=>scoreNodeToSvg(node,a)-scoreNodeToSvg(node,b))[0];
-    }
-    return pool.sort((a,b)=>scoreNodeToSvg(node,a)-scoreNodeToSvg(node,b))[0]||null;
-  }
-
+  // Match Figma nodes to SVG elements by id/name
+  // Figma SVG export uses node.name as id (spaces→spaces, Figma keeps them)
   let matched=0,layouts=0;
   function matchNode(node){
     if(!node)return;
-    const svgEl=findBestSvgMatch(node);
-    if(svgEl&&svgEl.dataset?.nid){
+    const name=node.name||'';
+    let svgEl=null;
+    try{
+      svgEl=svg.querySelector('[id="'+CSS.escape(name)+'"]');
+      if(!svgEl){const safe=name.replace(/[^a-zA-Z0-9_-]/g,'_');svgEl=svg.querySelector('#'+CSS.escape(safe));}
+    }catch(e){}
+    // For TEXT nodes: match by textContent if id didn't work (Cyrillic encoding issue)
+    if(!svgEl&&node.type==='TEXT'&&node.characters){
+      const chars=node.characters.trim();
+      svg.querySelectorAll('text').forEach(t=>{
+        if(!svgEl&&t.textContent.trim()===chars)svgEl=t;
+      });
+    }
+    // For FRAME nodes without match: try matching by Figma node id pattern
+    if(!svgEl&&node.name){
+      // Figma SVG uses spaces in ids like "Frame 2131329238"
+      svg.querySelectorAll('[id]').forEach(e=>{
+        if(!svgEl&&e.id===node.name)svgEl=e;
+      });
+    }
+
+    if(svgEl&&svgEl.dataset.nid){
       const nid=svgEl.dataset.nid;
-      matchedNids.add(nid);
-      GN.set(nid,node.name||svgEl.id||nid);
-      if(node.id)svgEl.setAttribute('data-figma-id',node.id);
+      GN.set(nid,name);
       matched++;
 
+      // Store text bounding box for TEXT nodes
       if(node.type==='TEXT'&&node.absoluteBoundingBox){
         const ab=node.absoluteBoundingBox;
-        const meta={
-          w:ab.width,
-          h:ab.height,
-          autoResize:textAutoResizeOf(node),
-          alignH:(node.style?.textAlignHorizontal||node.textAlignHorizontal||'LEFT').toUpperCase(),
-          alignV:(node.style?.textAlignVertical||node.textAlignVertical||'TOP').toUpperCase(),
-          frameX:ab.x,
-          frameY:ab.y
-        };
-        TBB.set(nid,meta);
-        try{positionTextInFrame(svgEl,nid,ab.x,ab.y,ab.width,ab.height);updateTextFrame(svgEl,nid);}catch(e){}
+        TBB.set(nid,{w:ab.width,h:ab.height,autoResize:node.style?.textAutoResize||'NONE'});
       }
 
+      // Store layout metadata if this is a layout frame
       if(node.layoutMode&&node.layoutMode!=='NONE'){
         layouts++;
         const dir=node.layoutMode==='HORIZONTAL'?'h':'v';
         const isH=dir==='h';
         const align=node.counterAxisAlignItems==='CENTER'?'center':node.counterAxisAlignItems==='MAX'?'end':'start';
+        const mainSz=(isH?node.primaryAxisSizingMode:node.primaryAxisSizingMode)==='AUTO'?'hug':'fixed';
+        const crossSz=node.counterAxisSizingMode==='AUTO'?'hug':'fixed';
+
+        // Per-child sizing
         const childSizing={};
         (node.children||[]).forEach(kid=>{
-          const kEl=findBestSvgMatch(kid);
-          if(kEl&&kEl.dataset?.nid){
+          const kName=kid.name||'';
+          let kEl=null;
+          try{
+            kEl=svg.querySelector('[id="'+CSS.escape(kName)+'"]');
+            if(!kEl){const ks=kName.replace(/[^a-zA-Z0-9_-]/g,'_');kEl=svg.querySelector('#'+CSS.escape(ks));}
+          }catch(e){}
+          if(kEl&&kEl.dataset.nid){
             const mainMode=(isH?kid.layoutSizingHorizontal:kid.layoutSizingVertical)||'FIXED';
             const crossMode=(isH?kid.layoutSizingVertical:kid.layoutSizingHorizontal)||'FIXED';
             childSizing[kEl.dataset.nid]={
-              main:(mainMode==='FILL'||kid.layoutGrow===1)?'fill':(mainMode==='HUG'?'hug':'fixed'),
-              cross:(crossMode==='FILL'||kid.layoutAlign==='STRETCH')?'fill':(crossMode==='HUG'?'hug':'fixed')
+              main:mainMode==='FILL'?'fill':mainMode==='HUG'?'hug':'fixed',
+              cross:crossMode==='FILL'?'fill':crossMode==='HUG'?'hug':'fixed'
             };
           }
         });
+
         LAY.set(nid,{
-          on:true,
-          dir,
+          on:true,dir,
           gap:node.itemSpacing||0,
-          pt:node.paddingTop||0,
-          pr:node.paddingRight||0,
-          pb:node.paddingBottom||0,
-          pl:node.paddingLeft||0,
-          align,
-          mainSizing:node.primaryAxisSizingMode==='AUTO'?'hug':'fixed',
-          crossSizing:node.counterAxisSizingMode==='AUTO'?'hug':'fixed',
-          spacing:node.primaryAxisAlignItems==='SPACE_BETWEEN'?'between':'packed',
-          childSizing
+          pt:node.paddingTop||0,pr:node.paddingRight||0,
+          pb:node.paddingBottom||0,pl:node.paddingLeft||0,
+          align,mainSizing:mainSz,crossSizing:crossSz,
+          spacing:'packed',childSizing
         });
       }
     }
+    // Recurse
     (node.children||[]).forEach(ch=>matchNode(ch));
   }
   matchNode(root);
-  [...LAY.keys()].forEach(id=>{const el=nM.get(id);if(el)applyLayout(el);});
-  fitSvgToContentIfNeeded();
-  bT();
+  bT(); // rebuild tree to show names
   closeM('figM');
   log.innerHTML=`<span style="color:var(--grn)">✓ Привязано ${matched} нод, ${layouts} layout, ${TBB.size} текстовых фреймов</span>`;
 }
